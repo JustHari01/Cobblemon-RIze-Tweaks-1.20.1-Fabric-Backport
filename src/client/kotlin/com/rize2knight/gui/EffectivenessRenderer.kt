@@ -1,0 +1,199 @@
+package com.rize2knight.gui
+
+import com.cobblemon.mod.common.api.gui.blitk
+import com.cobblemon.mod.common.api.moves.MoveTemplate
+import com.cobblemon.mod.common.api.moves.categories.DamageCategories
+import com.cobblemon.mod.common.api.text.bold
+import com.cobblemon.mod.common.api.text.font
+import com.cobblemon.mod.common.api.types.ElementalType
+import com.cobblemon.mod.common.battles.BattleFormat
+import com.cobblemon.mod.common.client.CobblemonClient.battle
+import com.cobblemon.mod.common.client.CobblemonResources
+import com.cobblemon.mod.common.client.battle.ActiveClientBattlePokemon
+import com.cobblemon.mod.common.client.gui.battle.BattleOverlay.Companion.TILE_HEIGHT
+import com.cobblemon.mod.common.client.gui.battle.BattleOverlay.Companion.TILE_WIDTH
+import com.cobblemon.mod.common.client.gui.battle.BattleOverlay.Companion.VERTICAL_INSET
+import com.cobblemon.mod.common.client.gui.battle.BattleOverlay.Companion.VERTICAL_SPACING
+import com.cobblemon.mod.common.client.gui.battle.subscreen.BattleMoveSelection
+import com.cobblemon.mod.common.client.render.drawScaledText
+import com.rize2knight.CobblemonRizeTweaksClient
+import com.rize2knight.config.BattleGUIRendererStyle
+import com.rize2knight.util.MoveEffectivenessCalculator
+import com.rize2knight.util.ReflectionUtils
+import com.rize2knight.util.UITweaksEffectiveness
+import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.GuiGraphics
+import net.minecraft.client.resources.language.I18n
+import net.minecraft.network.chat.Component
+import net.minecraft.network.chat.contents.TranslatableContents
+import net.minecraft.resources.ResourceLocation
+
+object EffectivenessRenderer {
+    private val singleTarget = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/range_single.png")
+    private val multiTarget = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/range_multi.png")
+    private val leftNeutral = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_effective.png")
+    private val rightNeutral = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_effective_flipped.png")
+    private val leftGreen = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_green.png")
+    private val rightGreen = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_green_flipped.png")
+    private val leftYellow = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_yellow.png")
+    private val rightYellow = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_yellow_flipped.png")
+    private val leftRed = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_red.png")
+    private val rightRed = ResourceLocation.tryBuild(CobblemonRizeTweaksClient.MODID, "textures/battle/effectiveness/battle_red_flipped.png")
+
+    private val config = CobblemonRizeTweaksClient.config
+    private val playerUUID = Minecraft.getInstance().player?.uuid
+    private var playerPokemon : ActiveClientBattlePokemon? = null
+    private var typeChangesList : Map<String,MutableList<ElementalType>>? = null
+    var moveTile : BattleMoveSelection.MoveTile? = null
+
+    fun render(context: GuiGraphics, typeChanges: Map<String,MutableList<ElementalType>>){
+        val battle = battle ?: return
+        val playerUUID = playerUUID ?: return
+        if(moveTile == null) return
+
+        typeChangesList = typeChanges
+
+        // Determine player's side and opponent's side
+        val playerSide = if (battle.side1.actors.any { it.uuid == playerUUID }) battle.side1 else battle.side2
+        val opponentSide = if (playerSide == battle.side1) battle.side2 else battle.side1
+
+        // Cobblemon 1.5.2 exposes the selected active Pokémon through the move selection request.
+        playerPokemon = moveTile!!.moveSelection.request.activePokemon
+        playerSide.activeClientBattlePokemon.forEachIndexed { index, activeClientBattlePokemon ->
+            renderIfHovered(context, activeClientBattlePokemon, true, index)
+        }
+
+        // Render opponent side in reverse order to match battle layout
+        opponentSide.activeClientBattlePokemon.reversed().forEachIndexed { index, activeClientBattlePokemon ->
+            renderIfHovered(context, activeClientBattlePokemon, false, index)
+        }
+
+        // Prevents Renderer to always be visible
+        moveTile = null
+    }
+
+    private fun renderIfHovered(context: GuiGraphics, activeBattlePokemon: ActiveClientBattlePokemon, left: Boolean, rank: Int) {
+        // Prevent render if Pokémon is currently being swapped out or is player Pokémon
+        if (activeBattlePokemon.animations.peek() !== null ||
+            playerPokemon == null) return
+        val move = moveTile?.move ?: return
+        val isPlayer = activeBattlePokemon.getPNX() == playerPokemon!!.getPNX()
+
+        // Determine if the activeBattlePokemon is a valid target for the selected move
+        val selectableTargetList = moveTile!!.targetList
+        val isTarget = selectableTargetList?.firstOrNull { it.getPNX() == activeBattlePokemon.getPNX() }?.getPNX()
+        val isMultiTarget = selectableTargetList == null &&
+            activeBattlePokemon.actor.side != playerPokemon!!.actor.side &&
+            !isPlayer
+
+        // Render effectiveness only if the activeBattlePokemon is a valid target or is the player's Pokémon
+        if((isTarget != null || isMultiTarget || isPlayer) && moveTile!!.moveTemplate.damageCategory != DamageCategories.STATUS) {
+            val playerNumberOffset = (activeBattlePokemon.getActorShowdownId()[1].digitToInt() - 1) / 2 * 10
+            // Cobblemon 1.5.2 uses the standard battle tile layout for all formats.
+            val isCompact = false
+            val tileWidth = TILE_WIDTH
+            val tileHeight = TILE_HEIGHT
+            val verticalSpacing = VERTICAL_SPACING
+            val textureWidth = TILE_WIDTH + 26
+
+            val x = activeBattlePokemon.xDisplacement
+            val y = VERTICAL_INSET + rank * verticalSpacing + (if (left) playerNumberOffset else (battle!!.battleFormat.battleType.actorsPerSide - 1) * 10 - playerNumberOffset)
+
+            val x0 = x + if (left) tileWidth  else -1
+            val dmgMultiplier = getMoveEffectiveness(moveTile!!.moveTemplate, activeBattlePokemon)
+            val effectivenessText = Component.literal("x$dmgMultiplier")
+            val matrixStack = context.pose()
+
+            val leftTexture = when {
+                dmgMultiplier!! > 1f -> leftGreen
+                dmgMultiplier > 0f && dmgMultiplier < 1f -> leftYellow
+                dmgMultiplier == 0f -> leftRed
+                else -> leftNeutral
+            }
+            val rightTexture = when {
+                dmgMultiplier > 1f -> rightGreen
+                dmgMultiplier > 0f && dmgMultiplier < 1f -> rightYellow
+                dmgMultiplier == 0f -> rightRed
+                else -> rightNeutral
+            }
+
+            UITweaksEffectiveness.set(dmgMultiplier)
+
+            // Render Config Options Logic
+            if(config!!.battleGUIStyle == BattleGUIRendererStyle.DISABLE) return
+            if(config.battleGUIStyle == BattleGUIRendererStyle.RIzeMultiBattle && battle!!.battleFormat.battleType.name == BattleFormat.GEN_9_SINGLES.battleType.name) return
+            blitk(
+                matrixStack = matrixStack,
+                texture = if (isPlayer) (if (isMultiTarget) multiTarget else singleTarget)
+                else (if (left) leftTexture else rightTexture),
+                x = x - if (left) 0 else if (isCompact) 28 else 26,
+                y = y,
+                height = tileHeight,
+                width = textureWidth,
+                textureHeight = TILE_HEIGHT + 20,
+                vOffset = 0,
+                uOffset = 0
+            )
+            if (effectivenessText != null && !isPlayer) {
+                val textRenderer = Minecraft.getInstance().font
+                val textOffset =
+                    textRenderer.width(effectivenessText.font(CobblemonResources.DEFAULT_LARGE).bold()) / 2
+                val centeredOffsetX = if (isCompact) 12 else 21 / 2
+
+                drawScaledText(
+                    context = context,
+                    font = CobblemonResources.DEFAULT_LARGE,
+                    text = effectivenessText.bold(),
+                    x = x0 + if (left) centeredOffsetX - textOffset else -(centeredOffsetX + textOffset),
+                    y = y + if (isCompact) 6 else 8,
+                    shadow = true
+                )
+            }
+        }
+    }
+
+    // Calculate move effectiveness considering type changes
+    private fun getMoveEffectiveness(move: MoveTemplate, activeBattlePokemon: ActiveClientBattlePokemon): Float? {
+        val opponent = activeBattlePokemon.battlePokemon ?: return null
+        val aspects: Set<String> = ReflectionUtils.getPrivateField(opponent, "aspects") ?: return null
+
+        val opponentForm = opponent.species.getForm(aspects)
+
+        // Get type changes if any
+        val typeChangeList = getTypeChanges(activeBattlePokemon)
+        var primaryType: ElementalType? = opponentForm.primaryType
+        var secondaryType: ElementalType? = opponentForm.secondaryType
+
+        if (typeChangeList != null && config!!.typeChanges) {
+            if (typeChangeList.isNotEmpty()) {
+                primaryType = typeChangeList.getOrNull(0) ?: primaryType // Use the first element if available, otherwise keep the original type
+                secondaryType = typeChangeList.getOrNull(1) // Use the second element if available, otherwise NULL mainly cuz of Soak type moves
+            }
+        }
+
+        val damageMultiplier : Float = MoveEffectivenessCalculator.getMoveDamageMult(move, primaryType, secondaryType)
+
+        return damageMultiplier
+    }
+
+    // Get type changes based on the opponent's owner and name
+    private fun getTypeChanges(opponent: ActiveClientBattlePokemon): List<ElementalType>? {
+        var typeChangeList: List<ElementalType>? = null
+        val ownerName = when (val owner = opponent.actor.displayName.contents) {
+            is TranslatableContents -> I18n.get(owner.key)
+            else -> opponent.actor.displayName.string
+        }
+        val opponentName = opponent.battlePokemon?.displayName?.string
+
+        if(opponent.actor.type.name == "WILD"){
+            if(typeChangesList?.get("WILD:$opponentName") != null){
+                typeChangeList = typeChangesList!!["WILD:$opponentName"]
+            }
+        }
+        else if(typeChangesList?.get("$ownerName:$opponentName") != null){
+            typeChangeList = typeChangesList!!["$ownerName:$opponentName"]
+        }
+
+        return typeChangeList
+    }
+}

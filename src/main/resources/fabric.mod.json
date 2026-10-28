@@ -1,0 +1,49 @@
+{
+	"schemaVersion": 1,
+	"id": "cobblemonrizetweaks",
+	"version": "${version}",
+	"name": "Cobblemon RIze Tweaks (Unofficial 1.20.1 Backport)",
+	"description": "A community backport of Cobblemon RIze Tweaks for Minecraft 1.20.1 Fabric.",
+	"authors": [
+		"RIze2kNight",
+		"JustHari01 (1.20.1 backport)"
+	],
+	"contact": {
+		"sources": "https://github.com/JustHari01/Cobblemon-RIze-Tweaks-1.20.1-Fabric-Backport",
+		"issues": "https://github.com/JustHari01/Cobblemon-RIze-Tweaks-1.20.1-Fabric-Backport/issues"
+	},
+	"license": "MIT",
+	"icon": "assets/cobblemonrizetweaks/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			{
+				"value": "com.rize2knight.CobblemonRizeTweaks",
+				"adapter": "kotlin"
+			}
+		],
+		"client": [
+			{
+				"value": "com.rize2knight.CobblemonRizeTweaksClient",
+				"adapter": "kotlin"
+			}
+		],
+		"modmenu": [ "com.rize2knight.config.ModMenuIntegration" ]
+	},
+	"mixins": [
+		"cobblemonrizetweaks.mixins.json",
+		{
+			"config": "cobblemonrizetweaks.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.15.11",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*",
+		"fabric-language-kotlin": "*",
+		"cobblemon": ">=1.5.2",
+		"cloth-config": ">=11.1.118"
+	}
+}
